@@ -17,7 +17,7 @@ if not GEMINI_API_KEY:
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Die 3 EuroLeague-Legionäre (ohne FC Bayern / ohne Daniel Theis)
+# Die 3 EuroLeague-Legionäre
 TARGET_PLAYERS = [
     "Maodo Lo", "Isaac Bonga", "David Kramer"
 ]
@@ -30,8 +30,6 @@ espn_url_el = f"https://site.api.espn.com/apis/site/v2/sports/basketball/eurolea
 
 try:
     response = requests.get(espn_url_el, timeout=15)
-    
-    # Fallback-Endpoint, falls die v2-API je nach Spieltag anders strukturiert ist
     if response.status_code != 200:
         espn_url_el = f"https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=basketball&league=eur.1&dates={yesterday}"
         response = requests.get(espn_url_el, timeout=15)
@@ -91,7 +89,7 @@ Deine Aufgabe:
 6. Verwende passendes Markdown (fett, kursiv) und Emojis (🇪🇺, 🏀) für gute Lesbarkeit.
 """
 
-# 4. Gemini Bericht generieren (Gültige Modelle & bis zu 5 Wiederholungen bei 503)
+# 4. Gemini Bericht generieren
 MODELS_TO_TRY = ["gemini-3.8-flash", "gemini-1.5-flash"]
 response_text = None
 
@@ -111,3 +109,44 @@ for model_name in MODELS_TO_TRY:
                 break
         except ServerError as e:
             if e.code == 503:
+                print(f"Modell {model_name} überlastet (503). Pause {backoff_delay}s... ({attempt + 1}/{max_retries})")
+                time.sleep(backoff_delay)
+                backoff_delay *= 2
+            else:
+                print(f"ServerError bei {model_name}: {e}")
+                break
+        except Exception as e:
+            print(f"Fehler bei Modell {model_name}: {e}")
+            break
+
+    if response_text:
+        print(f"Erfolgreich generiert mit {model_name}!")
+        break
+
+if not response_text:
+    print("Keines der Gemini-Modelle konnte eine Antwort liefern. Abbruch.")
+    sys.exit(1)
+
+print("--- Generierter Bericht ---")
+print(response_text)
+
+# 5. Telegram Nachricht senden
+if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": response_text,
+        "parse_mode": "Markdown"
+    }
+    res = requests.post(url, json=payload)
+    if res.status_code == 200:
+        print("Erfolgreich an Telegram gesendet!")
+    else:
+        payload.pop("parse_mode", None)
+        res_fallback = requests.post(url, json=payload)
+        if res_fallback.status_code == 200:
+            print("Erfolgreich als Plain Text an Telegram gesendet.")
+        else:
+            print(f"Telegram-Fehler ({res.status_code}): {res.text}")
+else:
+    print("Telegram Token oder Chat ID fehlen. Nachricht wurde nur in die Konsole gedruckt.")
